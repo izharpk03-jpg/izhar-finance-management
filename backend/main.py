@@ -1,18 +1,26 @@
 # backend/main.py
-from fastapi import FastAPI, HTTPException, Depends, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
 import os
-from supabase import create_client, Client
-from dotenv import load_dotenv
-from datetime import datetime, timedelta
 import uuid
+from datetime import datetime, timedelta
+from typing import List, Optional
+
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi_offline import FastAPIOffline
+from pydantic import BaseModel, EmailStr
+from supabase import Client, create_client
 
 load_dotenv()
 
-app = FastAPI(title="IZHAR Finance Management API", version="1.0.0")
+# Initialize FastAPI app using FastAPIOffline
+app = FastAPIOffline(title="IZHAR Finance Management API", version="1.0.0")
+
+# Root path route (Fixes {"detail": "Not Found"})
+@app.get("/")
+def read_root():
+    return {"message": "API is running"}
 
 # CORS configuration
 app.add_middleware(
@@ -99,7 +107,7 @@ async def get_dashboard(user=Depends(get_current_user)):
 @app.post("/api/transactions")
 async def create_transaction(transaction: TransactionCreate, user=Depends(get_current_user)):
     try:
-        data = transaction.dict()
+        data = transaction.model_dump()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
         
@@ -136,7 +144,7 @@ async def get_transactions(
 @app.post("/api/investments")
 async def create_investment(investment: InvestmentCreate, user=Depends(get_current_user)):
     try:
-        data = investment.dict()
+        data = investment.model_dump()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
         
@@ -156,7 +164,7 @@ async def get_investments(user=Depends(get_current_user)):
 @app.post("/api/borrow")
 async def create_borrow(borrow: BorrowCreate, user=Depends(get_current_user)):
     try:
-        data = borrow.dict()
+        data = borrow.model_dump()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
         
@@ -176,7 +184,7 @@ async def get_borrow(user=Depends(get_current_user)):
 @app.post("/api/credit-cards")
 async def create_credit_card(card: CreditCardCreate, user=Depends(get_current_user)):
     try:
-        data = card.dict()
+        data = card.model_dump()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
         data["outstanding"] = 0
@@ -202,7 +210,6 @@ async def get_report(
     user=Depends(get_current_user)
 ):
     try:
-        # This would be a more complex query in production
         response = supabase.rpc("generate_report", {
             "p_user_id": user.id,
             "p_report_type": report_type,
@@ -221,8 +228,6 @@ async def export_data(
     user=Depends(get_current_user)
 ):
     try:
-        # This would generate CSV/Excel/PDF export
-        # Using pandas and openpyxl for Excel, reportlab for PDF
         response = supabase.rpc("export_transactions", {
             "p_user_id": user.id,
             "p_start_date": start_date,
