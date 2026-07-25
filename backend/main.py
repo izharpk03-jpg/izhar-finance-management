@@ -1,46 +1,46 @@
-# backend/main.py
-import os
-import uuid
-from datetime import datetime, timedelta
-from typing import List, Optional
-
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi_offline import FastAPIOffline
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
-from supabase import Client, create_client
+from typing import Optional, List
+import os
+from supabase import create_client, Client
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+import uuid
+import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
 load_dotenv()
 
-# Initialize FastAPI app using FastAPIOffline
-app = FastAPIOffline(title="IZHAR Finance Management API", version="1.0.0")
+app = FastAPI(title="IZHAR Finance Management API", version="1.0.0")
 
-# Root path route (Fixes {"detail": "Not Found"})
-@app.get("/")
-def read_root():
-    return {"message": "API is running"}
-
-# CORS configuration
+# CORS configuration - Allow all origins for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://izhar-finance.vercel.app"],
+    allow_origins=["*"],  # Change this to specific domains in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Supabase client
-supabase: Optional[Client] = None
-
 try:
-    supabase = create_client(
-        os.getenv("SUPABASE_URL", ""),
-        os.getenv("SUPABASE_KEY", "")
-    )
-except Exception:
-    supabase = None
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if not supabase_url or not supabase_key:
+        raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set")
+    
+    supabase: Client = create_client(supabase_url, supabase_key)
+    logger.info("Supabase client initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Supabase client: {e}")
+    raise
 
 security = HTTPBearer()
 
@@ -75,7 +75,7 @@ class BorrowCreate(BaseModel):
 
 class CreditCardCreate(BaseModel):
     name: str
-    limit: float
+    limit_amount: float
     due_date: str
     statement_date: str
 
@@ -84,14 +84,24 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     token = credentials.credentials
     try:
         user = supabase.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+            )
         return user.user
-    except Exception:
+    except Exception as e:
+        logger.error(f"Authentication error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
         )
 
 # Routes
+@app.get("/")
+async def root():
+    return {"message": "IZHAR Finance Management API", "status": "running"}
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
@@ -100,20 +110,27 @@ async def health_check():
 async def get_dashboard(user=Depends(get_current_user)):
     try:
         response = supabase.rpc("get_dashboard_data", {"p_user_id": user.id}).execute()
-        return response.data[0] if response.data else {}
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return {}
     except Exception as e:
+        logger.error(f"Dashboard error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/transactions")
 async def create_transaction(transaction: TransactionCreate, user=Depends(get_current_user)):
     try:
-        data = transaction.model_dump()
+        data = transaction.dict()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
+        data["created_at"] = datetime.now().isoformat()
         
         response = supabase.table("transactions").insert(data).execute()
-        return response.data[0]
+        if response.data:
+            return response.data[0]
+        raise HTTPException(status_code=400, detail="Failed to create transaction")
     except Exception as e:
+        logger.error(f"Transaction creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/transactions")
@@ -137,106 +154,88 @@ async def get_transactions(
             
         query = query.range(offset, offset + limit - 1).order("created_at", desc=True)
         response = query.execute()
-        return response.data
+        return response.data if response.data else []
     except Exception as e:
+        logger.error(f"Transactions fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/investments")
 async def create_investment(investment: InvestmentCreate, user=Depends(get_current_user)):
     try:
-        data = investment.model_dump()
+        data = investment.dict()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
+        data["created_at"] = datetime.now().isoformat()
         
         response = supabase.table("investments").insert(data).execute()
-        return response.data[0]
+        if response.data:
+            return response.data[0]
+        raise HTTPException(status_code=400, detail="Failed to create investment")
     except Exception as e:
+        logger.error(f"Investment creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/investments")
 async def get_investments(user=Depends(get_current_user)):
     try:
         response = supabase.table("investments").select("*").eq("user_id", user.id).execute()
-        return response.data
+        return response.data if response.data else []
     except Exception as e:
+        logger.error(f"Investments fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/borrow")
 async def create_borrow(borrow: BorrowCreate, user=Depends(get_current_user)):
     try:
-        data = borrow.model_dump()
+        data = borrow.dict()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
+        data["created_at"] = datetime.now().isoformat()
         
         response = supabase.table("borrow").insert(data).execute()
-        return response.data[0]
+        if response.data:
+            return response.data[0]
+        raise HTTPException(status_code=400, detail="Failed to create borrow record")
     except Exception as e:
+        logger.error(f"Borrow creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/borrow")
 async def get_borrow(user=Depends(get_current_user)):
     try:
         response = supabase.table("borrow").select("*").eq("user_id", user.id).execute()
-        return response.data
+        return response.data if response.data else []
     except Exception as e:
+        logger.error(f"Borrow fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/credit-cards")
 async def create_credit_card(card: CreditCardCreate, user=Depends(get_current_user)):
     try:
-        data = card.model_dump()
+        data = card.dict()
         data["user_id"] = user.id
         data["id"] = str(uuid.uuid4())
         data["outstanding"] = 0
+        data["created_at"] = datetime.now().isoformat()
         
         response = supabase.table("credit_cards").insert(data).execute()
-        return response.data[0]
+        if response.data:
+            return response.data[0]
+        raise HTTPException(status_code=400, detail="Failed to create credit card")
     except Exception as e:
+        logger.error(f"Credit card creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/credit-cards")
 async def get_credit_cards(user=Depends(get_current_user)):
     try:
         response = supabase.table("credit_cards").select("*").eq("user_id", user.id).execute()
-        return response.data
+        return response.data if response.data else []
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/reports/{report_type}")
-async def get_report(
-    report_type: str,
-    start_date: str,
-    end_date: str,
-    user=Depends(get_current_user)
-):
-    try:
-        response = supabase.rpc("generate_report", {
-            "p_user_id": user.id,
-            "p_report_type": report_type,
-            "p_start_date": start_date,
-            "p_end_date": end_date
-        }).execute()
-        return response.data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/export/{format}")
-async def export_data(
-    format: str,
-    start_date: str,
-    end_date: str,
-    user=Depends(get_current_user)
-):
-    try:
-        response = supabase.rpc("export_transactions", {
-            "p_user_id": user.id,
-            "p_start_date": start_date,
-            "p_end_date": end_date
-        }).execute()
-        return response.data
-    except Exception as e:
+        logger.error(f"Credit cards fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: izhar-finance-backend
+    runtime: python
+    repo: https://github.com/yourusername/izhar-finance
+    plan: free
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
