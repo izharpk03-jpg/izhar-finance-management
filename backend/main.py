@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from supabase import create_client, Client  # Changed from supabase_py to supabase
+from supabase import create_client, Client
 from dotenv import load_dotenv
 
 # Configure logging
@@ -49,7 +49,8 @@ try:
     if not supabase_url or not supabase_key:
         raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set")
     
-    supabase: Client = create_client(supabase_url, supabase_key)
+    # Simple initialization without extra arguments
+    supabase = create_client(supabase_url, supabase_key)
     logger.info("Supabase client initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
@@ -439,10 +440,11 @@ async def get_summary_report(
 # ============ Main Entry Point ============
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8000))
+    # Use PORT from environment or default to 10000 for Render
+    port = int(os.getenv("PORT", 10000))
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=port,
-        reload=True if os.getenv("ENV") == "development" else False
+        reload=False  # Disable reload in production
     )
